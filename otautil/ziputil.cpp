@@ -75,7 +75,7 @@ bool ExtractPackageRecursive(ZipArchiveHandle zip, const std::string& zip_path,
             continue;
         }
 
-        if (dirCreateHierarchy(path.c_str(), UNZIP_DIRMODE, timestamp, true, sehnd) != 0) {
+        if (mkdir_recursively(path.c_str(), UNZIP_DIRMODE, true, sehnd) != 0) {
             LOG(ERROR) << "failed to create dir for " << path;
             return false;
         }
