@@ -17,9 +17,14 @@
 #ifndef OTAUTIL_DIRUTIL_H_
 #define OTAUTIL_DIRUTIL_H_
 
+#include <stdbool.h>
 #include <sys/stat.h>  // mode_t
 
 #include <string>
+
+#ifdef __cplusplus
+extern "C" {
+#endif
 
 struct selabel_handle;
 
@@ -35,5 +40,12 @@ struct selabel_handle;
 // not a directory).
 int mkdir_recursively(const std::string& path, mode_t mode, bool strip_filename,
                       const struct selabel_handle* sehnd);
+/* rm -rf <path>
+ */
+int dirUnlinkHierarchy(const char *path);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif  // OTAUTIL_DIRUTIL_H_
