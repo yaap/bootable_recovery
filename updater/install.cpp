@@ -64,6 +64,7 @@
 #include "otautil/error_code.h"
 #include "otautil/print_sha1.h"
 #include "otautil/sysutil.h"
+#include "otautil/ziputil.h"
 
 #ifndef __ANDROID__
 #include <cutils/memory.h>  // for strlcpy
@@ -81,6 +82,34 @@ static bool UpdateBlockDeviceNameForPartition(UpdaterInterface* updater, Partiti
   return true;
 }
 
+static bool is_dir(const std::string& dirpath) {
+  struct stat st;
+  return stat(dirpath.c_str(), &st) == 0 && S_ISDIR(st.st_mode);
+}
+
+// Create all parent directories of name, if necessary.
+static bool make_parents(const std::string& name) {
+  size_t prev_end = 0;
+  while (prev_end < name.size()) {
+    size_t next_end = name.find('/', prev_end + 1);
+    if (next_end == std::string::npos) {
+      break;
+    }
+    std::string dir_path = name.substr(0, next_end);
+    if (!is_dir(dir_path)) {
+      int result = mkdir(dir_path.c_str(), 0700);
+      if (result != 0) {
+        PLOG(ERROR) << "failed to mkdir " << dir_path << " when make parents for " << name;
+        return false;
+      }
+
+      LOG(INFO) << "created [" << dir_path << "]";
+    }
+    prev_end = next_end;
+  }
+  return true;
+}
+
 // This is the updater side handler for ui_print() in edify script. Contents will be sent over to
 // the recovery side for on-screen display.
 Value* UIPrintFn(const char* name, State* state, const std::vector<std::unique_ptr<Expr>>& argv) {
@@ -92,6 +121,39 @@ Value* UIPrintFn(const char* name, State* state, const std::vector<std::unique_p
   std::string buffer = android::base::Join(args, "");
   state->updater->UiPrint(buffer);
   return StringValue(buffer);
+}
+
+// package_extract_dir(package_dir, dest_dir)
+//   Extracts all files from the package underneath package_dir and writes them to the
+//   corresponding tree beneath dest_dir. Any existing files are overwritten.
+//   Example: package_extract_dir("system", "/system")
+//
+//   Note: package_dir needs to be a relative path; dest_dir needs to be an absolute path.
+Value* PackageExtractDirFn(const char* name, State* state,
+                           const std::vector<std::unique_ptr<Expr>>& argv) {
+  if (argv.size() != 2) {
+    return ErrorAbort(state, kArgsParsingFailure, "%s() expects 2 args, got %zu", name,
+                      argv.size());
+  }
+
+  std::vector<std::string> args;
+  if (!ReadArgs(state, argv, &args)) {
+    return ErrorAbort(state, kArgsParsingFailure, "%s() Failed to parse the argument(s)", name);
+  }
+  const std::string& zip_path = args[0];
+  const std::string& dest_path = args[1];
+
+  auto updater = state->updater;
+
+  ZipArchiveHandle za = updater->GetPackageHandle();
+
+  // To create a consistent system image, never use the clock for timestamps.
+  constexpr struct utimbuf timestamp = { 1217592000, 1217592000 };  // 8/1/2008 default
+
+  bool success = ExtractPackageRecursive(za, zip_path, dest_path, &timestamp,
+                                         updater->GetRuntime()->sehandle());
+
+  return StringValue(success ? "t" : "");
 }
 
 // package_extract_file(package_file[, dest_file])
@@ -564,7 +626,6 @@ Value* DeleteFn(const char* name, State* state, const std::vector<std::unique_pt
   return StringValue(std::to_string(success));
 }
 
-
 Value* ShowProgressFn(const char* name, State* state,
                       const std::vector<std::unique_ptr<Expr>>& argv) {
   if (argv.size() != 2) {
@@ -618,57 +679,28 @@ Value* SetProgressFn(const char* name, State* state,
   return StringValue(frac_str);
 }
 
-// package_extract_dir(package_dir, dest_dir)
-//   Extracts all files from the package underneath package_dir and writes them to the
-//   corresponding tree beneath dest_dir. Any existing files are overwritten.
-//   Example: package_extract_dir("system", "/system")
-//
-//   Note: package_dir needs to be a relative path; dest_dir needs to be an absolute path.
-Value* PackageExtractDirFn(const char* name, State* state,
-                           const std::vector<std::unique_ptr<Expr>>&argv) {
-  if (argv.size() != 2) {
-    return ErrorAbort(state, kArgsParsingFailure, "%s() expects 2 args, got %zu", name,
-                      argv.size());
-  }
-
-  std::vector<std::string> args;
-  if (!ReadArgs(state, argv, &args)) {
-    return ErrorAbort(state, kArgsParsingFailure, "%s() Failed to parse the argument(s)", name);
-  }
-  const std::string& zip_path = args[0];
-  const std::string& dest_path = args[1];
-
-  auto updater = state->updater;
-  ZipArchiveHandle za = updater->GetPackageHandle();
-
-  // To create a consistent system image, never use the clock for timestamps.
-  constexpr struct utimbuf timestamp = { 1217592000, 1217592000 };  // 8/1/2008 default
-
-  auto sehandle = selinux_android_file_context_handle();
-  bool success = ExtractPackageRecursive(za, zip_path, dest_path, &timestamp, sehandle);
-
-  return StringValue(success ? "t" : "");
-}
-
 // symlink(target, [src1, src2, ...])
 //   Creates all sources as symlinks to target. It unlinks any previously existing src1, src2, etc
 //   before creating symlinks.
 Value* SymlinkFn(const char* name, State* state, const std::vector<std::unique_ptr<Expr>>& argv) {
   if (argv.size() == 0) {
-    return ErrorAbort(state, kArgsParsingFailure, "%s() expects 1+ args, got %zu", name, argv.size());
-  }
-  std::string target;
-  if (!Evaluate(state, argv[0], &target)) {
-    return nullptr;
+    return ErrorAbort(state, kArgsParsingFailure, "%s() expects 1+ args, got %zu", name,
+                      argv.size());
   }
 
-  std::vector<std::string> srcs;
-  if (!ReadArgs(state, argv, &srcs, 1, argv.size())) {
+  std::vector<std::string> args;
+  if (!ReadArgs(state, argv, &args)) {
     return ErrorAbort(state, kArgsParsingFailure, "%s(): Failed to parse the argument(s)", name);
   }
 
+  const auto& target = args[0];
+  if (target.empty()) {
+    return ErrorAbort(state, kArgsParsingFailure, "%s() target argument can't be empty", name);
+  }
+
   size_t bad = 0;
-  for (const auto& src : srcs) {
+  for (size_t i = 1; i < args.size(); ++i) {
+    const auto& src = args[i];
     if (unlink(src.c_str()) == -1 && errno != ENOENT) {
       PLOG(ERROR) << name << ": failed to remove " << src;
       ++bad;
@@ -704,15 +736,14 @@ struct perm_parsed_args {
   uint64_t capabilities;
 };
 
-static struct perm_parsed_args ParsePermArgs(State * state,
-                                             const std::vector<std::string>& args) {
+static struct perm_parsed_args ParsePermArgs(State* state, const std::vector<std::string>& args) {
   struct perm_parsed_args parsed;
+  auto updater = state->updater;
   int bad = 0;
   static int max_warnings = 20;
 
   memset(&parsed, 0, sizeof(parsed));
 
-  auto updater = state->updater;
   for (size_t i = 1; i < args.size(); i += 2) {
     if (args[i] == "uid") {
       int64_t uid;
@@ -720,7 +751,8 @@ static struct perm_parsed_args ParsePermArgs(State * state,
         parsed.uid = uid;
         parsed.has_uid = true;
       } else {
-        updater->UiPrint(android::base::StringPrintf("ParsePermArgs: invalid UID \"%s\"\n", args[i + 1].c_str()));
+        updater->UiPrint(android::base::StringPrintf("ParsePermArgs: invalid UID \"%s\"\n",
+                                                     args[i + 1].c_str()));
         bad++;
       }
       continue;
@@ -731,7 +763,8 @@ static struct perm_parsed_args ParsePermArgs(State * state,
         parsed.gid = gid;
         parsed.has_gid = true;
       } else {
-        updater->UiPrint(android::base::StringPrintf("ParsePermArgs: invalid GID \"%s\"\n", args[i + 1].c_str()));
+        updater->UiPrint(android::base::StringPrintf("ParsePermArgs: invalid GID \"%s\"\n",
+                                                     args[i + 1].c_str()));
         bad++;
       }
       continue;
@@ -742,7 +775,8 @@ static struct perm_parsed_args ParsePermArgs(State * state,
         parsed.mode = mode;
         parsed.has_mode = true;
       } else {
-        updater->UiPrint(android::base::StringPrintf("ParsePermArgs: invalid mode \"%s\"\n", args[i + 1].c_str()));
+        updater->UiPrint(android::base::StringPrintf("ParsePermArgs: invalid mode \"%s\"\n",
+                                                     args[i + 1].c_str()));
         bad++;
       }
       continue;
@@ -753,7 +787,8 @@ static struct perm_parsed_args ParsePermArgs(State * state,
         parsed.dmode = mode;
         parsed.has_dmode = true;
       } else {
-        updater->UiPrint(android::base::StringPrintf("ParsePermArgs: invalid dmode \"%s\"\n", args[i + 1].c_str()));
+        updater->UiPrint(android::base::StringPrintf("ParsePermArgs: invalid dmode \"%s\"\n",
+                                                     args[i + 1].c_str()));
         bad++;
       }
       continue;
@@ -764,7 +799,8 @@ static struct perm_parsed_args ParsePermArgs(State * state,
         parsed.fmode = mode;
         parsed.has_fmode = true;
       } else {
-        updater->UiPrint(android::base::StringPrintf("ParsePermArgs: invalid fmode \"%s\"\n", args[i + 1].c_str()));
+        updater->UiPrint(android::base::StringPrintf("ParsePermArgs: invalid fmode \"%s\"\n",
+                                                     args[i + 1].c_str()));
         bad++;
       }
       continue;
@@ -775,7 +811,8 @@ static struct perm_parsed_args ParsePermArgs(State * state,
         parsed.capabilities = capabilities;
         parsed.has_capabilities = true;
       } else {
-        updater->UiPrint(android::base::StringPrintf("ParsePermArgs: invalid capabilities \"%s\"\n", args[i + 1].c_str()));
+        updater->UiPrint(android::base::StringPrintf("ParsePermArgs: invalid capabilities \"%s\"\n",
+                                                     args[i + 1].c_str()));
         bad++;
       }
       continue;
@@ -785,7 +822,8 @@ static struct perm_parsed_args ParsePermArgs(State * state,
         parsed.selabel = args[i + 1].c_str();
         parsed.has_selabel = true;
       } else {
-        updater->UiPrint(android::base::StringPrintf("ParsePermArgs: invalid selabel \"%s\"\n", args[i + 1].c_str()));
+        updater->UiPrint(android::base::StringPrintf("ParsePermArgs: invalid selabel \"%s\"\n",
+                                                     args[i + 1].c_str()));
         bad++;
       }
       continue;
@@ -803,13 +841,14 @@ static struct perm_parsed_args ParsePermArgs(State * state,
 
 static int ApplyParsedPerms(State* state, const char* filename, const struct stat* statptr,
                             struct perm_parsed_args parsed) {
+  auto updater = state->updater;
   int bad = 0;
 
-  auto updater = state->updater;
   if (parsed.has_selabel) {
     if (lsetfilecon(filename, parsed.selabel) != 0) {
-      updater->UiPrint(android::base::StringPrintf("ApplyParsedPerms: lsetfilecon of %s to %s failed: %s\n", filename,
-               parsed.selabel, strerror(errno)));
+      updater->UiPrint(android::base::StringPrintf(
+                            "ApplyParsedPerms: lsetfilecon of %s to %s failed: %s\n",
+                            filename, parsed.selabel, strerror(errno)));
       bad++;
     }
   }
@@ -821,40 +860,45 @@ static int ApplyParsedPerms(State* state, const char* filename, const struct sta
 
   if (parsed.has_uid) {
     if (chown(filename, parsed.uid, -1) < 0) {
-      updater->UiPrint(android::base::StringPrintf("ApplyParsedPerms: chown of %s to %d failed: %s\n", filename, parsed.uid,
-               strerror(errno)));
+      updater->UiPrint(android::base::StringPrintf(
+                            "ApplyParsedPerms: chown of %s to %d failed: %s\n",
+                            filename, parsed.uid, strerror(errno)));
       bad++;
     }
   }
 
   if (parsed.has_gid) {
     if (chown(filename, -1, parsed.gid) < 0) {
-      updater->UiPrint(android::base::StringPrintf("ApplyParsedPerms: chgrp of %s to %d failed: %s\n", filename, parsed.gid,
-               strerror(errno)));
+      updater->UiPrint(android::base::StringPrintf(
+                            "ApplyParsedPerms: chgrp of %s to %d failed: %s\n",
+                            filename, parsed.gid, strerror(errno)));
       bad++;
     }
   }
 
   if (parsed.has_mode) {
     if (chmod(filename, parsed.mode) < 0) {
-      updater->UiPrint(android::base::StringPrintf("ApplyParsedPerms: chmod of %s to %d failed: %s\n", filename, parsed.mode,
-               strerror(errno)));
+      updater->UiPrint(android::base::StringPrintf(
+                            "ApplyParsedPerms: chmod of %s to %d failed: %s\n",
+                            filename, parsed.mode, strerror(errno)));
       bad++;
     }
   }
 
   if (parsed.has_dmode && S_ISDIR(statptr->st_mode)) {
     if (chmod(filename, parsed.dmode) < 0) {
-      updater->UiPrint(android::base::StringPrintf("ApplyParsedPerms: chmod of %s to %d failed: %s\n", filename, parsed.dmode,
-               strerror(errno)));
+      updater->UiPrint(android::base::StringPrintf(
+                            "ApplyParsedPerms: chmod of %s to %d failed: %s\n",
+                            filename, parsed.dmode, strerror(errno)));
       bad++;
     }
   }
 
   if (parsed.has_fmode && S_ISREG(statptr->st_mode)) {
     if (chmod(filename, parsed.fmode) < 0) {
-      updater->UiPrint(android::base::StringPrintf("ApplyParsedPerms: chmod of %s to %d failed: %s\n", filename, parsed.fmode,
-               strerror(errno)));
+      updater->UiPrint(android::base::StringPrintf(
+                            "ApplyParsedPerms: chmod of %s to %d failed: %s\n",
+                            filename, parsed.fmode, strerror(errno)));
       bad++;
     }
   }
@@ -863,21 +907,23 @@ static int ApplyParsedPerms(State* state, const char* filename, const struct sta
     if (parsed.capabilities == 0) {
       if ((removexattr(filename, XATTR_NAME_CAPS) == -1) && (errno != ENODATA)) {
         // Report failure unless it's ENODATA (attribute not set)
-        updater->UiPrint(android::base::StringPrintf("ApplyParsedPerms: removexattr of %s to %" PRIx64 " failed: %s\n", filename,
-                 parsed.capabilities, strerror(errno)));
+        updater->UiPrint(android::base::StringPrintf(
+                                "ApplyParsedPerms: removexattr of %s to %" PRIx64 " failed: %s\n",
+                                filename, parsed.capabilities, strerror(errno)));
         bad++;
       }
     } else {
       struct vfs_cap_data cap_data;
       memset(&cap_data, 0, sizeof(cap_data));
-      cap_data.magic_etc = VFS_CAP_REVISION | VFS_CAP_FLAGS_EFFECTIVE;
+      cap_data.magic_etc = VFS_CAP_REVISION_2 | VFS_CAP_FLAGS_EFFECTIVE;
       cap_data.data[0].permitted = (uint32_t)(parsed.capabilities & 0xffffffff);
       cap_data.data[0].inheritable = 0;
       cap_data.data[1].permitted = (uint32_t)(parsed.capabilities >> 32);
       cap_data.data[1].inheritable = 0;
       if (setxattr(filename, XATTR_NAME_CAPS, &cap_data, sizeof(cap_data), 0) < 0) {
-        updater->UiPrint(android::base::StringPrintf("ApplyParsedPerms: setcap of %s to %" PRIx64 " failed: %s\n", filename,
-                 parsed.capabilities, strerror(errno)));
+        updater->UiPrint(android::base::StringPrintf(
+                                "ApplyParsedPerms: setcap of %s to %" PRIx64 " failed: %s\n",
+                                filename, parsed.capabilities, strerror(errno)));
         bad++;
       }
     }
@@ -891,15 +937,16 @@ static int ApplyParsedPerms(State* state, const char* filename, const struct sta
 static struct perm_parsed_args recursive_parsed_args;
 static State* recursive_state;
 
-static int do_SetMetadataRecursive(const char* filename, const struct stat* statptr, int fileflags,
-                                   struct FTW* pfwt) {
+static int do_SetMetadataRecursive(const char* filename, const struct stat* statptr,
+                                   int /*fileflags*/, struct FTW* /*pfwt*/) {
   return ApplyParsedPerms(recursive_state, filename, statptr, recursive_parsed_args);
 }
 
-static Value* SetMetadataFn(const char* name, State* state, const std::vector<std::unique_ptr<Expr>>& argv) {
+static Value* SetMetadataFn(const char* name, State* state,
+                            const std::vector<std::unique_ptr<Expr>>& argv) {
   if ((argv.size() % 2) != 1) {
-    return ErrorAbort(state, kArgsParsingFailure, "%s() expects an odd number of arguments, got %zu",
-                      name, argv.size());
+    return ErrorAbort(state, kArgsParsingFailure,
+                      "%s() expects an odd number of arguments, got %zu", name, argv.size());
   }
 
   std::vector<std::string> args;

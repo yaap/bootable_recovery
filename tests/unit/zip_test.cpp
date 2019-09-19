@@ -22,6 +22,7 @@
 
 #include <android-base/file.h>
 #include <gtest/gtest.h>
+#include <otautil/ziputil.h>
 #include <ziparchive/zip_archive.h>
 
 #include "otautil/ZipUtil.h"
