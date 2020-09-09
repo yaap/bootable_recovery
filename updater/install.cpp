@@ -51,6 +51,7 @@
 #include <bootloader_message/bootloader_message.h>
 #include <ext4_utils/wipe.h>
 #include <openssl/sha.h>
+#include <selinux/android.h>
 #include <selinux/label.h>
 #include <selinux/selinux.h>
 #include <ziparchive/zip_archive.h>
@@ -637,11 +638,13 @@ Value* PackageExtractDirFn(const char* name, State* state,
   const std::string& zip_path = args[0];
   const std::string& dest_path = args[1];
 
-  ZipArchiveHandle za = static_cast<UpdaterInfo*>(state->cookie)->package_zip;
+  auto updater = state->updater;
+  ZipArchiveHandle za = updater->GetPackageHandle();
 
   // To create a consistent system image, never use the clock for timestamps.
   constexpr struct utimbuf timestamp = { 1217592000, 1217592000 };  // 8/1/2008 default
 
+  auto sehandle = selinux_android_file_context_handle();
   bool success = ExtractPackageRecursive(za, zip_path, dest_path, &timestamp, sehandle);
 
   return StringValue(success ? "t" : "");
@@ -709,6 +712,7 @@ static struct perm_parsed_args ParsePermArgs(State * state,
 
   memset(&parsed, 0, sizeof(parsed));
 
+  auto updater = state->updater;
   for (size_t i = 1; i < args.size(); i += 2) {
     if (args[i] == "uid") {
       int64_t uid;
@@ -716,7 +720,7 @@ static struct perm_parsed_args ParsePermArgs(State * state,
         parsed.uid = uid;
         parsed.has_uid = true;
       } else {
-        uiPrintf(state, "ParsePermArgs: invalid UID \"%s\"\n", args[i + 1].c_str());
+        updater->UiPrint(android::base::StringPrintf("ParsePermArgs: invalid UID \"%s\"\n", args[i + 1].c_str()));
         bad++;
       }
       continue;
@@ -727,7 +731,7 @@ static struct perm_parsed_args ParsePermArgs(State * state,
         parsed.gid = gid;
         parsed.has_gid = true;
       } else {
-        uiPrintf(state, "ParsePermArgs: invalid GID \"%s\"\n", args[i + 1].c_str());
+        updater->UiPrint(android::base::StringPrintf("ParsePermArgs: invalid GID \"%s\"\n", args[i + 1].c_str()));
         bad++;
       }
       continue;
@@ -738,7 +742,7 @@ static struct perm_parsed_args ParsePermArgs(State * state,
         parsed.mode = mode;
         parsed.has_mode = true;
       } else {
-        uiPrintf(state, "ParsePermArgs: invalid mode \"%s\"\n", args[i + 1].c_str());
+        updater->UiPrint(android::base::StringPrintf("ParsePermArgs: invalid mode \"%s\"\n", args[i + 1].c_str()));
         bad++;
       }
       continue;
@@ -749,7 +753,7 @@ static struct perm_parsed_args ParsePermArgs(State * state,
         parsed.dmode = mode;
         parsed.has_dmode = true;
       } else {
-        uiPrintf(state, "ParsePermArgs: invalid dmode \"%s\"\n", args[i + 1].c_str());
+        updater->UiPrint(android::base::StringPrintf("ParsePermArgs: invalid dmode \"%s\"\n", args[i + 1].c_str()));
         bad++;
       }
       continue;
@@ -760,7 +764,7 @@ static struct perm_parsed_args ParsePermArgs(State * state,
         parsed.fmode = mode;
         parsed.has_fmode = true;
       } else {
-        uiPrintf(state, "ParsePermArgs: invalid fmode \"%s\"\n", args[i + 1].c_str());
+        updater->UiPrint(android::base::StringPrintf("ParsePermArgs: invalid fmode \"%s\"\n", args[i + 1].c_str()));
         bad++;
       }
       continue;
@@ -771,7 +775,7 @@ static struct perm_parsed_args ParsePermArgs(State * state,
         parsed.capabilities = capabilities;
         parsed.has_capabilities = true;
       } else {
-        uiPrintf(state, "ParsePermArgs: invalid capabilities \"%s\"\n", args[i + 1].c_str());
+        updater->UiPrint(android::base::StringPrintf("ParsePermArgs: invalid capabilities \"%s\"\n", args[i + 1].c_str()));
         bad++;
       }
       continue;
@@ -781,7 +785,7 @@ static struct perm_parsed_args ParsePermArgs(State * state,
         parsed.selabel = args[i + 1].c_str();
         parsed.has_selabel = true;
       } else {
-        uiPrintf(state, "ParsePermArgs: invalid selabel \"%s\"\n", args[i + 1].c_str());
+        updater->UiPrint(android::base::StringPrintf("ParsePermArgs: invalid selabel \"%s\"\n", args[i + 1].c_str()));
         bad++;
       }
       continue;
@@ -801,10 +805,11 @@ static int ApplyParsedPerms(State* state, const char* filename, const struct sta
                             struct perm_parsed_args parsed) {
   int bad = 0;
 
+  auto updater = state->updater;
   if (parsed.has_selabel) {
     if (lsetfilecon(filename, parsed.selabel) != 0) {
-      uiPrintf(state, "ApplyParsedPerms: lsetfilecon of %s to %s failed: %s\n", filename,
-               parsed.selabel, strerror(errno));
+      updater->UiPrint(android::base::StringPrintf("ApplyParsedPerms: lsetfilecon of %s to %s failed: %s\n", filename,
+               parsed.selabel, strerror(errno)));
       bad++;
     }
   }
@@ -816,40 +821,40 @@ static int ApplyParsedPerms(State* state, const char* filename, const struct sta
 
   if (parsed.has_uid) {
     if (chown(filename, parsed.uid, -1) < 0) {
-      uiPrintf(state, "ApplyParsedPerms: chown of %s to %d failed: %s\n", filename, parsed.uid,
-               strerror(errno));
+      updater->UiPrint(android::base::StringPrintf("ApplyParsedPerms: chown of %s to %d failed: %s\n", filename, parsed.uid,
+               strerror(errno)));
       bad++;
     }
   }
 
   if (parsed.has_gid) {
     if (chown(filename, -1, parsed.gid) < 0) {
-      uiPrintf(state, "ApplyParsedPerms: chgrp of %s to %d failed: %s\n", filename, parsed.gid,
-               strerror(errno));
+      updater->UiPrint(android::base::StringPrintf("ApplyParsedPerms: chgrp of %s to %d failed: %s\n", filename, parsed.gid,
+               strerror(errno)));
       bad++;
     }
   }
 
   if (parsed.has_mode) {
     if (chmod(filename, parsed.mode) < 0) {
-      uiPrintf(state, "ApplyParsedPerms: chmod of %s to %d failed: %s\n", filename, parsed.mode,
-               strerror(errno));
+      updater->UiPrint(android::base::StringPrintf("ApplyParsedPerms: chmod of %s to %d failed: %s\n", filename, parsed.mode,
+               strerror(errno)));
       bad++;
     }
   }
 
   if (parsed.has_dmode && S_ISDIR(statptr->st_mode)) {
     if (chmod(filename, parsed.dmode) < 0) {
-      uiPrintf(state, "ApplyParsedPerms: chmod of %s to %d failed: %s\n", filename, parsed.dmode,
-               strerror(errno));
+      updater->UiPrint(android::base::StringPrintf("ApplyParsedPerms: chmod of %s to %d failed: %s\n", filename, parsed.dmode,
+               strerror(errno)));
       bad++;
     }
   }
 
   if (parsed.has_fmode && S_ISREG(statptr->st_mode)) {
     if (chmod(filename, parsed.fmode) < 0) {
-      uiPrintf(state, "ApplyParsedPerms: chmod of %s to %d failed: %s\n", filename, parsed.fmode,
-               strerror(errno));
+      updater->UiPrint(android::base::StringPrintf("ApplyParsedPerms: chmod of %s to %d failed: %s\n", filename, parsed.fmode,
+               strerror(errno)));
       bad++;
     }
   }
@@ -858,8 +863,8 @@ static int ApplyParsedPerms(State* state, const char* filename, const struct sta
     if (parsed.capabilities == 0) {
       if ((removexattr(filename, XATTR_NAME_CAPS) == -1) && (errno != ENODATA)) {
         // Report failure unless it's ENODATA (attribute not set)
-        uiPrintf(state, "ApplyParsedPerms: removexattr of %s to %" PRIx64 " failed: %s\n", filename,
-                 parsed.capabilities, strerror(errno));
+        updater->UiPrint(android::base::StringPrintf("ApplyParsedPerms: removexattr of %s to %" PRIx64 " failed: %s\n", filename,
+                 parsed.capabilities, strerror(errno)));
         bad++;
       }
     } else {
@@ -871,8 +876,8 @@ static int ApplyParsedPerms(State* state, const char* filename, const struct sta
       cap_data.data[1].permitted = (uint32_t)(parsed.capabilities >> 32);
       cap_data.data[1].inheritable = 0;
       if (setxattr(filename, XATTR_NAME_CAPS, &cap_data, sizeof(cap_data), 0) < 0) {
-        uiPrintf(state, "ApplyParsedPerms: setcap of %s to %" PRIx64 " failed: %s\n", filename,
-                 parsed.capabilities, strerror(errno));
+        updater->UiPrint(android::base::StringPrintf("ApplyParsedPerms: setcap of %s to %" PRIx64 " failed: %s\n", filename,
+                 parsed.capabilities, strerror(errno)));
         bad++;
       }
     }
