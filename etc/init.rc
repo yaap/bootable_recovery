@@ -23,6 +23,8 @@ on init
 
     symlink /system/bin /bin
     symlink /system/etc /etc
+    rmdir /sbin
+    symlink /system/bin /sbin
 
     mkdir /sdcard
     mkdir /system
@@ -48,6 +50,9 @@ on init
 
     # Start essential services
     start servicemanager
+
+    # pstore/ramoops previous console log
+    mount pstore pstore /sys/fs/pstore
 
 on boot
     ifup lo

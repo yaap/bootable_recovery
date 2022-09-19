@@ -42,6 +42,8 @@
 #include <android-base/strings.h>
 #include <cutils/properties.h> /* for property_list */
 #include <fs_mgr/roots.h>
+#include <hardware/boot_control.h>
+#include <hardware/hardware.h>
 #include <ziparchive/zip_archive.h>
 
 #include "bootloader_message/bootloader_message.h"
@@ -166,6 +168,43 @@ static bool yes_no(Device* device, const char* question1, const char* question2)
       headers, items, 0, true,
       std::bind(&Device::HandleMenuKey, device, std::placeholders::_1, std::placeholders::_2));
   return (chosen_item == 1);
+}
+
+
+std::string get_chosen_slot(Device* device) {
+  std::vector<std::string> headers{ "Choose which slot to boot into on next boot." };
+  std::vector<std::string> items{ "A", "B" };
+  size_t chosen_item = device->GetUI()->ShowMenu(
+      headers, items, 0, true,
+      std::bind(&Device::HandleMenuKey, device, std::placeholders::_1, std::placeholders::_2));
+  if (chosen_item < 0)
+    return "";
+  return items[chosen_item];
+}
+
+int set_slot(Device* device) {
+  std::string slot = get_chosen_slot(device);
+  if (slot == "")
+    return 0;
+  const hw_module_t *hw_module;
+  boot_control_module_t *module;
+  int ret;
+  ret = hw_get_module("bootctrl", &hw_module);
+  if (ret != 0) {
+    device->GetUI()->Print("Error getting bootctrl module.\n");
+  } else {
+    module = (boot_control_module_t*) hw_module;
+    module->init(module);
+    int slot_number = 0;
+    if (slot == "B")
+      slot_number = 1;
+    if (module->setActiveBootSlot(module, slot_number))
+      device->GetUI()->Print("Error changing bootloader boot slot to %s", slot.c_str());
+    else {
+      device->GetUI()->Print("Switched slot to %s.\n", slot.c_str());
+    }
+  }
+  return ret;
 }
 
 static bool ask_to_wipe_data(Device* device) {
@@ -479,6 +518,9 @@ static Device::BuiltinAction PromptAndWait(Device* device, InstallResult status)
         if (status == INSTALL_REBOOT) {
           return reboot_action;
         }
+        if (status == INSTALL_NONE) {
+          update_in_progress = false;
+        }
 
         if (status == INSTALL_SUCCESS) {
           update_in_progress = false;
@@ -495,6 +537,10 @@ static Device::BuiltinAction PromptAndWait(Device* device, InstallResult status)
 
       case Device::VIEW_RECOVERY_LOGS:
         choose_recovery_file(device);
+        break;
+
+      case Device::SWAP_SLOT:
+        set_slot(device);
         break;
 
       case Device::RUN_GRAPHICS_TEST:
@@ -703,6 +749,11 @@ Device::BuiltinAction start_recovery(Device* device, const std::vector<std::stri
   std::vector<std::string> title_lines =
       android::base::Split(android::base::GetProperty("ro.build.fingerprint", ""), ":");
   title_lines.insert(std::begin(title_lines), "Android Recovery");
+  if (android::base::GetBoolProperty("ro.build.ab_update", false)) {
+    std::string slot = android::base::GetProperty("ro.boot.slot_suffix", "");
+    if (android::base::StartsWith(slot, "_")) slot.erase(0, 1);
+    title_lines.push_back("Active slot: " + slot);
+  }
   ui->SetTitle(title_lines);
 
   ui->ResetKeyInterruptStatus();
@@ -835,12 +886,10 @@ Device::BuiltinAction start_recovery(Device* device, const std::vector<std::stri
     status = ApplyFromAdb(device, true /* rescue_mode */, &next_action);
     ui->Print("\nInstall from ADB complete (status: %d).\n", status);
   } else if (!just_exit) {
-    // If this is an eng or userdebug build, automatically turn on the text display if no command
-    // is specified. Note that this should be called before setting the background to avoid
+    // Always show menu if no command is specified.
+    // Note that this should be called before setting the background to avoid
     // flickering the background image.
-    if (IsRoDebuggable()) {
-      ui->ShowText(true);
-    }
+    ui->ShowText(true);
     status = INSTALL_NONE;  // No command specified
     ui->SetBackground(RecoveryUI::NO_COMMAND);
   }
