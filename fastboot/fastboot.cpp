@@ -39,8 +39,9 @@ static const std::vector<std::pair<std::string, Device::BuiltinAction>> kFastboo
 Device::BuiltinAction StartFastboot(Device* device, const std::vector<std::string>& /* args */) {
   RecoveryUI* ui = device->GetUI();
 
-  std::vector<std::string> title_lines = { "Android Fastboot" };
+  std::vector<std::string> title_lines = { "YAAP Fastboot" };
   title_lines.push_back("Product name - " + android::base::GetProperty("ro.product.device", ""));
+  title_lines.push_back("Build name - " + android::base::GetProperty("ro.yaap.version", ""));
   title_lines.push_back("Bootloader version - " + android::base::GetProperty("ro.bootloader", ""));
   title_lines.push_back("Baseband version - " +
                         android::base::GetProperty("ro.build.expect.baseband", ""));
