@@ -559,7 +559,7 @@ void ScreenRecoveryUI::SelectAndShowBackgroundText(const std::vector<std::string
   // clang-format off
   std::vector<std::string> instruction = {
     locale_selection,
-    "    Use volume up/down to switch locales and power to exit."
+    "Use volume up/down to switch locales and power to exit."
   };
   // clang-format on
   text_y += DrawWrappedTextLines(text_x, text_y, instruction);
