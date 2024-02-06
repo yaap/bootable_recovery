@@ -77,6 +77,11 @@ static bool IsDeviceUnlocked() {
   return "orange" == android::base::GetProperty("ro.boot.verifiedbootstate", "");
 }
 
+static bool IsExternalSdcard() {
+  std::string chars = android::base::GetProperty("ro.build.characteristics", "");
+  return chars.find("nosdcard") == std::string::npos;
+}
+
 static std::string get_build_type() {
   return android::base::GetProperty("ro.build.type", "");
 }
@@ -479,6 +484,10 @@ int main(int argc, char** argv) {
     device->RemoveMenuItemForAction(Device::RUN_GRAPHICS_TEST);
     device->RemoveMenuItemForAction(Device::RUN_LOCALE_TEST);
     device->RemoveMenuItemForAction(Device::ENTER_RESCUE);
+  }
+
+  if (!IsExternalSdcard()) {
+    device->RemoveMenuItemForAction(Device::APPLY_SDCARD);
   }
 
   if (!android::base::GetBoolProperty("ro.build.ab_update", false)) {
