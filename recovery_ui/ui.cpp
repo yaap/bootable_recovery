@@ -43,24 +43,30 @@
 using namespace std::chrono_literals;
 
 constexpr int UI_WAIT_KEY_TIMEOUT_SEC = 120;
-constexpr const char* BRIGHTNESS_FILE = "/sys/class/leds/lcd-backlight/brightness";
-constexpr const char* MAX_BRIGHTNESS_FILE = "/sys/class/leds/lcd-backlight/max_brightness";
+constexpr const char* DEFAULT_BRIGHTNESS_FILE = "/sys/class/leds/lcd-backlight/brightness";
+constexpr const char* DEFAULT_MAX_BRIGHTNESS_FILE = "/sys/class/leds/lcd-backlight/max_brightness";
 constexpr const char* BRIGHTNESS_FILE_SDM = "/sys/class/backlight/panel0-backlight/brightness";
 constexpr const char* MAX_BRIGHTNESS_FILE_SDM =
     "/sys/class/backlight/panel0-backlight/max_brightness";
-constexpr const char* BRIGHTNESS_FILE_PWM =
-    "/sys/class/backlight/pwm-backlight.0/brightness";
+constexpr const char* BRIGHTNESS_FILE_PWM = "/sys/class/backlight/pwm-backlight.0/brightness";
 constexpr const char* MAX_BRIGHTNESS_FILE_PWM =
     "/sys/class/backlight/pwm-backlight.0/max_brightness";
 
 constexpr int kDefaultTouchLowThreshold = 50;
 constexpr int kDefaultTouchHighThreshold = 90;
 
+constexpr int kDefaultNormalBrightnessPercent = 50;
+constexpr int kDefaultDimmedBrightnessPercent = 25;
+
 RecoveryUI::RecoveryUI()
-    : brightness_normal_(50),
-      brightness_dimmed_(25),
-      brightness_file_(BRIGHTNESS_FILE),
-      max_brightness_file_(MAX_BRIGHTNESS_FILE),
+    : brightness_normal_(android::base::GetIntProperty("ro.recovery.ui.brightness_normal_percent",
+                                                       kDefaultNormalBrightnessPercent)),
+      brightness_dimmed_(android::base::GetIntProperty("ro.recovery.ui.brightness_dimmed_percent",
+                                                       kDefaultDimmedBrightnessPercent)),
+      brightness_file_(
+          android::base::GetProperty("ro.recovery.ui.brightness_file", DEFAULT_BRIGHTNESS_FILE)),
+      max_brightness_file_(android::base::GetProperty("ro.recovery.ui.max_brightness_file",
+                                                      DEFAULT_MAX_BRIGHTNESS_FILE)),
       touch_screen_allowed_(false),
       fastbootd_logo_enabled_(false),
       touch_low_threshold_(android::base::GetIntProperty("ro.recovery.ui.touch_low_threshold",
@@ -191,8 +197,23 @@ bool RecoveryUI::Init(const std::string& /* locale */) {
   return true;
 }
 
+enum SwipeDirection { UP, DOWN, RIGHT, LEFT };
+
+static SwipeDirection FlipSwipeDirection(SwipeDirection direction) {
+  switch (direction) {
+    case UP:
+      return SwipeDirection::DOWN;
+    case DOWN:
+      return SwipeDirection::UP;
+    case RIGHT:
+      return SwipeDirection::LEFT;
+    case LEFT:
+      return SwipeDirection::RIGHT;
+  }
+}
+
 void RecoveryUI::OnTouchDetected(int dx, int dy) {
-  enum SwipeDirection { UP, DOWN, RIGHT, LEFT } direction;
+  SwipeDirection direction;
 
   // We only consider a valid swipe if:
   // - the delta along one axis is below touch_low_threshold_;
@@ -211,6 +232,11 @@ void RecoveryUI::OnTouchDetected(int dx, int dy) {
   if (is_bootreason_recovery_ui_ && !IsTextVisible()) {
     ShowText(true);
     return;
+  }
+
+  // Flip swipe direction if screen is rotated upside down
+  if (gr_get_rotation() == GRRotation::DOWN) {
+    direction = FlipSwipeDirection(direction);
   }
 
   LOG(DEBUG) << "Swipe direction=" << direction;
