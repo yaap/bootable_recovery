@@ -23,6 +23,9 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/types.h>
+#include <sys/mount.h>
+#include <fs_mgr.h>
+
 #include <unistd.h>
 
 #include <functional>
@@ -68,8 +71,14 @@ static constexpr const char* COMMAND_FILE = "/cache/recovery/command";
 static constexpr const char* LAST_KMSG_FILE = "/cache/recovery/last_kmsg";
 static constexpr const char* LAST_LOG_FILE = "/cache/recovery/last_log";
 static constexpr const char* LOCALE_FILE = "/cache/recovery/last_locale";
-
 static constexpr const char* CACHE_ROOT = "/cache";
+
+#define MMC_0_TYPE_PATH "/sys/block/mmcblk0/device/type"
+#define SDCARD_BLK_0_PATH "/dev/block/mmcblk0p1"
+#define MMC_1_TYPE_PATH "/sys/block/mmcblk1/device/type"
+#define SDCARD_BLK_1_PATH "/dev/block/mmcblk1p1"
+#define SDEXPRESS_0_TYPE_PATH "/sys/block/nvme0n1/device/transport"
+#define SDEXPRESS_BLK_0_PATH "/dev/block/nvme0n1p1"
 
 static bool save_current_log = false;
 
@@ -345,6 +354,83 @@ static void run_graphics_test(RecoveryUI* ui) {
   }
 
   ui->ShowText(true);
+}
+
+// Check whether the mmc type of provided path (/sys/block/mmcblk*/device/type)
+// is SD (sdcard) or not.
+static int check_mmc_is_sdcard (const char* mmc_type_path)
+{
+  std::string mmc_type;
+
+  LOG(INFO) << "Checking mmc type for path : " << mmc_type_path;
+
+  if (!android::base::ReadFileToString(mmc_type_path, &mmc_type)) {
+    LOG(ERROR) << "Failed to read mmc type : " << strerror(errno);
+    return -1;
+  }
+  LOG(INFO) << "MMC type is : " << mmc_type.c_str();
+  if (!strncmp(mmc_type.c_str(), "SD", strlen("SD")) || !strncmp(mmc_type.c_str(), "pcie", strlen("pcie")))
+    return 0;
+  else
+    return -1;
+}
+
+// Gather mount point and other info from fstab, find the right block
+// path where sdcard is mounted, and try mounting it.
+static int do_sdcard_mount(RecoveryUI* ui)
+{
+  int rc = 0;
+  ui->Print("Update via sdcard. Mounting sdcard\n");
+  Volume *v = volume_for_mount_point("/sdcard");
+  if (v == nullptr) {
+          ui->Print("Unknown volume for /sdcard. Check fstab\n");
+          goto error;
+  }
+  if (strncmp(v->fs_type.c_str(), "vfat", sizeof("vfat")) && strncmp(v->fs_type.c_str(), "exfat", sizeof("exfat"))) {
+          ui->Print("Unsupported format on the sdcard: %s\n",
+                          v->fs_type.c_str());
+          goto error;
+  }
+
+  if (check_mmc_is_sdcard(MMC_0_TYPE_PATH) == 0) {
+    LOG(INFO) << "Mounting sdcard on " << SDCARD_BLK_0_PATH;
+    rc = mount(SDCARD_BLK_0_PATH,
+               v->mount_point.c_str(),
+               v->fs_type.c_str(),
+               v->flags,
+               v->fs_options.c_str());
+  }
+  else if (check_mmc_is_sdcard(MMC_1_TYPE_PATH) == 0) {
+    LOG(INFO) << "Mounting sdcard on " << SDCARD_BLK_1_PATH;
+    rc = mount(SDCARD_BLK_1_PATH,
+               v->mount_point.c_str(),
+               v->fs_type.c_str(),
+               v->flags,
+               v->fs_options.c_str());
+  }
+  else if (check_mmc_is_sdcard(SDEXPRESS_0_TYPE_PATH) == 0) {
+    LOG(INFO) << "Mounting sdexpress on " << SDEXPRESS_BLK_0_PATH;
+    rc = mount(SDEXPRESS_BLK_0_PATH,
+               v->mount_point.c_str(),
+               v->fs_type.c_str(),
+               v->flags,
+               v->fs_options.c_str());
+  }
+  else {
+    LOG(ERROR) << "Unable to get the block path for sdcard.";
+    goto error;
+  }
+
+  if (rc) {
+          ui->Print("Failed to mount sdcard : %s\n",
+                          strerror(errno));
+          goto error;
+  }
+  ui->Print("Done mounting sdcard\n");
+  return 0;
+
+error:
+  return -1;
 }
 
 static void WriteUpdateInProgress() {
@@ -677,6 +763,7 @@ Device::BuiltinAction start_recovery(Device* device, const std::vector<std::stri
   std::string locale;
 
   auto args_to_parse = StringVectorToNullTerminatedArray(args);
+  InstallResult status = INSTALL_SUCCESS;
 
   int arg = 0;
   int option_index = 0;
@@ -738,6 +825,10 @@ Device::BuiltinAction start_recovery(Device* device, const std::vector<std::stri
   }
   optind = 1;
 
+  // next_action indicates the next target to reboot into upon finishing the install. It could be
+  // overridden to a different reboot target per user request.
+  Device::BuiltinAction next_action = shutdown_after ? Device::SHUTDOWN : Device::REBOOT;
+
   printf("stage is [%s]\n", device->GetStage().value_or("").c_str());
   printf("reason is [%s]\n", device->GetReason().value_or("").c_str());
 
@@ -772,13 +863,17 @@ Device::BuiltinAction start_recovery(Device* device, const std::vector<std::stri
   }
   printf("\n\n");
 
+   if (update_package) {
+        if (!strncmp("/sdcard", update_package, 7)) {
+            if(do_sdcard_mount(ui) != 0) {
+                status = INSTALL_ERROR;
+                goto error;
+            }
+        }
+    }
+
   property_list(print_property, nullptr);
   printf("\n");
-
-  InstallResult status = INSTALL_SUCCESS;
-  // next_action indicates the next target to reboot into upon finishing the install. It could be
-  // overridden to a different reboot target per user request.
-  Device::BuiltinAction next_action = shutdown_after ? Device::SHUTDOWN : Device::REBOOT;
 
   if (update_package != nullptr) {
     // It's not entirely true that we will modify the flash. But we want
@@ -901,6 +996,7 @@ Device::BuiltinAction start_recovery(Device* device, const std::vector<std::stri
     ui->SetBackground(RecoveryUI::NO_COMMAND);
   }
 
+error:
   if (status == INSTALL_ERROR || status == INSTALL_CORRUPT) {
     ui->SetBackground(RecoveryUI::ERROR);
     if (!ui->IsTextVisible()) {
