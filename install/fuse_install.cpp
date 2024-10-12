@@ -216,77 +216,92 @@ InstallResult InstallWithFuseFromPath(std::string_view path, Device* device) {
 
 // Check whether the mmc type of provided path (/sys/block/mmcblk*/device/type)
 // is SD (sdcard) or not.
-static int check_mmc_is_sdcard (const char* mmc_type_path)
-{
+static int check_mmc_is_sdcard(const char* mmc_type_path) {
+
   std::string mmc_type;
 
-  LOG(INFO) << "Checking mmc type for path : " << mmc_type_path;
+  LOG(INFO) << "Checking MMC type for path : " << mmc_type_path;
 
   if (!android::base::ReadFileToString(mmc_type_path, &mmc_type)) {
-    LOG(ERROR) << "Failed to read mmc type : " << strerror(errno);
+    LOG(ERROR) << "Failed to read MMC type from path: " << mmc_type_path
+	       << " Error: " << strerror(errno);
     return -1;
   }
-  LOG(INFO) << "MMC type is : " << mmc_type.c_str();
-  if (!strncmp(mmc_type.c_str(), "SD", strlen("SD")) || !strncmp(mmc_type.c_str(), "pcie", strlen("pcie")))
-    return 0;
-  else
-    return -1;
+
+  mmc_type = android::base::Trim(mmc_type);
+  LOG(INFO) << "MMC type is : " << mmc_type;
+
+  if (mmc_type == "SD" || mmc_type == "pcie")
+    return 0; // SD card or PCIe-based SD card detected
+
+  return -1;
+
 }
 
 // Gather mount point and other info from fstab, find the right block
 // path where sdcard is mounted, and try mounting it.
 static int do_sdcard_mount() {
+
   int rc = 0;
 
   Volume *v = volume_for_mount_point("/sdcard");
   if (v == nullptr) {
     LOG(ERROR) << "Unknown volume for /sdcard. Check fstab\n";
-    goto error;
-  }
-  if (strncmp(v->fs_type.c_str(), "vfat", sizeof("vfat")) && strncmp(v->fs_type.c_str(), "exfat", sizeof("exfat"))) {
-    LOG(ERROR) << "Unsupported format on the sdcard: "
-               << v->fs_type.c_str() << "\n";
-    goto error;
+    return -1;
   }
 
+  // Determine the block path of the SD card.
+  const char* sdcard_block_path = nullptr;
   if (check_mmc_is_sdcard(MMC_0_TYPE_PATH) == 0) {
-    LOG(INFO) << "Mounting sdcard on " << SDCARD_BLK_0_PATH;
-    rc = mount(SDCARD_BLK_0_PATH,
-               v->mount_point.c_str(),
-               v->fs_type.c_str(),
-               v->flags,
-               v->fs_options.c_str());
-  }
-  else if (check_mmc_is_sdcard(MMC_1_TYPE_PATH) == 0) {
-    LOG(INFO) << "Mounting sdcard on " << SDCARD_BLK_1_PATH;
-    rc = mount(SDCARD_BLK_1_PATH,
-               v->mount_point.c_str(),
-               v->fs_type.c_str(),
-               v->flags,
-               v->fs_options.c_str());
-  }
-  else if (check_mmc_is_sdcard(SDEXPRESS_0_TYPE_PATH) == 0) {
-    LOG(INFO) << "Mounting sdexpress on " << SDEXPRESS_BLK_0_PATH;
-    rc = mount(SDEXPRESS_BLK_0_PATH,
-               v->mount_point.c_str(),
-               v->fs_type.c_str(),
-               v->flags,
-               v->fs_options.c_str());
-  }
-  else {
-    LOG(ERROR) << "Unable to get the block path for sdcard.";
-    goto error;
+    LOG(INFO) << "Detected SD card on " << SDCARD_BLK_0_PATH;
+    sdcard_block_path = SDCARD_BLK_0_PATH;
+  } else if (check_mmc_is_sdcard(MMC_1_TYPE_PATH) == 0) {
+    LOG(INFO) << "Detected SD card on " << SDCARD_BLK_1_PATH;
+    sdcard_block_path = SDCARD_BLK_1_PATH;
+  } else if (check_mmc_is_sdcard(SDEXPRESS_0_TYPE_PATH) == 0) {
+    LOG(INFO) << "Detected SD Express card on " << SDEXPRESS_BLK_0_PATH;
+    sdcard_block_path = SDEXPRESS_BLK_0_PATH;
+  } else {
+    LOG(ERROR) << "Unable to detect SD card";
+    return -1;
   }
 
-  if (rc) {
-    LOG(ERROR) << "Failed to mount sdcard: " << strerror(errno) << "\n";
-    goto error;
-  }
-  LOG(INFO) << "Done mounting sdcard\n";
-  return 0;
+  // Check filesystem type from fstab and dynamically set the type based on the value. Accepted values: vfat, exfat, auto
+  std::string fs_type = v->fs_type;
 
-error:
+  // If fs_type is "auto", try mounting as vfat first, then exfat.
+  if (fs_type == "auto") {
+    LOG(INFO) << "Filesystem type is auto, trying vfat first";
+    // Attempt to mount as vfat
+    rc = mount(sdcard_block_path, v->mount_point.c_str(), "vfat", v->flags, v->fs_options.c_str());
+    if (rc == 0) {
+      LOG(INFO) << "Mounted sdcard as vfat";
+      return 0;  // Successfully mounted as vfat
+    }
+
+    LOG(WARNING) << "Failed to mount sdcard as vfat, trying exfat...";
+
+    // If vfat fails, try to mount as exfat
+    rc = mount(sdcard_block_path, v->mount_point.c_str(), "exfat", v->flags, v->fs_options.c_str());
+    if (rc == 0) {
+      LOG(INFO) << "Mounted sdcard as exfat";
+      return 0;  // Successfully mounted as exfat
+    }
+  } else {
+    // If fs_type is explicitly vfat or exfat, attempt that directly
+    LOG(INFO) << "Attempting to mount as " << fs_type;
+    rc = mount(sdcard_block_path, v->mount_point.c_str(), fs_type.c_str(), v->flags, v->fs_options.c_str());
+    if (rc == 0) {
+      LOG(INFO) << "Mounted sdcard as " << fs_type;
+      return 0;
+    }
+  }
+
+  // If both mounting attempts fail, log the error
+  LOG(ERROR) << "Mount failed for " << fs_type;;
+
   return -1;
+
 }
 
 InstallResult ApplyFromSdcard(Device* device) {
