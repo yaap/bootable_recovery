@@ -28,3 +28,6 @@ bool FinishPendingSnapshotMerges(Device* device);
  * devices were created or there was no need to.
  */
 bool CreateSnapshotPartitions();
+
+// Check whether it's okay to cancel any in-progress OTAs for sideload.
+bool IsCancelUpdateSafe(Device* device);

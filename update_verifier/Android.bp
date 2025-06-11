@@ -38,7 +38,10 @@ python_library_host {
     srcs: [
         "care_map.proto",
     ],
-    proto: {type: "lite", canonical_path_from_root: false},
+    proto: {
+        type: "lite",
+        canonical_path_from_root: false,
+    },
     visibility: [
         "//build/make/tools/releasetools:__subpackages__",
     ],
@@ -136,9 +139,4 @@ python_binary_host {
         canonical_path_from_root: false,
     },
 
-    version: {
-        py3: {
-            embedded_launcher: true,
-        },
-    },
 }

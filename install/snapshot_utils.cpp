@@ -23,8 +23,19 @@
 #include "recovery_ui/ui.h"
 #include "recovery_utils/roots.h"
 
+using android::snapshot::CancelResult;
 using android::snapshot::CreateResult;
 using android::snapshot::SnapshotManager;
+
+bool IsCancelUpdateSafe(Device* device) {
+  auto sm = SnapshotManager::New();
+  if (!sm) {
+    RecoveryUI* ui = device->GetUI();
+    ui->Print("Could not create SnapshotManager.\n");
+    return false;
+  }
+  return sm->IsCancelUpdateSafe();
+}
 
 bool FinishPendingSnapshotMerges(Device* device) {
   if (!android::base::GetBoolProperty("ro.virtual_ab.enabled", false)) {

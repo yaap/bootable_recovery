@@ -15,12 +15,21 @@
 //
 
 prebuilt_res {
-    name: "recovery-resources-common-hdpi",
+    name: "recovery-fonts-12",
     recovery: true,
     install_in_root: true,
     relative_install_path: "images",
-    srcs: [
-        "images/*.png",
-    ],
+    src: "12x22.png",
     no_full_install: true,
+    filename: "font.png",
+}
+
+prebuilt_res {
+    name: "recovery-fonts-18",
+    recovery: true,
+    install_in_root: true,
+    relative_install_path: "images",
+    src: "18x32.png",
+    no_full_install: true,
+    filename: "font.png",
 }
