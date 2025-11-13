@@ -30,3 +30,9 @@ android_app {
         "src/**/*.java",
     ],
 }
+
+filegroup {
+    name: "bootable_recovery_resources",
+    srcs: ["res/**/*.xml"],
+    path: "res",
+}

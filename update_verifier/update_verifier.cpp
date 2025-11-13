@@ -369,7 +369,7 @@ int update_verifier(int argc, char** argv) {
 
     bool supports_checkpoint = false;
     auto sm = android::defaultServiceManager();
-    android::sp<android::IBinder> binder = sm->getService(android::String16("vold"));
+    android::sp<android::IBinder> binder = sm->waitForService(android::String16("vold"));
     if (binder) {
       auto vold = android::interface_cast<android::os::IVold>(binder);
       android::binder::Status status = vold->supportsCheckpoint(&supports_checkpoint);

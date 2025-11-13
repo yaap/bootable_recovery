@@ -19,7 +19,6 @@
 #include <functional>
 #include <map>
 #include <string>
-#include <vector>
 
 #include <snapuserd/snapuserd_client.h>
 #include "otautil/rangeset.h"
@@ -28,10 +27,6 @@
 // During the verification, it reads all the blocks in the care_map. And if a failure happens,
 // it rejects the current boot and triggers a fallback.
 
-// Note that update_verifier should be backward compatible to not reject care_map.txt from old
-// releases, which could otherwise fail to boot into the new release. For example, we've changed
-// the care_map format between N and O. An O update_verifier would fail to work with N care_map.txt.
-// This could be a result of sideloading an O OTA while the device having a pending N update.
 int update_verifier(int argc, char** argv);
 
 // The UpdateVerifier parses the content in the care map, and continues to verify the
@@ -41,9 +36,8 @@ class UpdateVerifier {
  public:
   UpdateVerifier();
 
-  // This function tries to process the care_map.pb as protobuf message; and falls back to use
-  // care_map.txt if the pb format file doesn't exist. If the parsing succeeds, put the result
-  // of the pair <partition_name, ranges> into the |partition_map_|.
+  // This function tries to process the care_map.pb as protobuf message. If the parsing succeeds,
+  // put the result of the pair <partition_name, ranges> into the |partition_map_|.
   bool ParseCareMap();
 
   // Verifies the new boot by reading all the cared blocks for partitions in |partition_map_|.
