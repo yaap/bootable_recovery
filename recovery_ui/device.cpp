@@ -56,6 +56,13 @@ Device::Device(RecoveryUI* ui) : ui_(ui) {
   PopulateMenuItems();
 }
 
+// Define destructor out-of-line so that RecoveryUI is defined for unique_ptr.
+Device::~Device() = default;
+
+void Device::ResetUI(RecoveryUI* ui) {
+  ui_.reset(ui);
+}
+
 void Device::RemoveMenuItemForAction(Device::BuiltinAction action) {
   g_menu_actions.erase(
       std::remove_if(g_menu_actions.begin(), g_menu_actions.end(),

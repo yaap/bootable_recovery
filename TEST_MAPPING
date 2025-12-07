@@ -6,5 +6,10 @@
     {
       "name": "recovery_unit_test"
     }
+  ],
+  "postsubmit": [
+    {
+      "name": "RecoveryOtaTest"
+    }
   ]
 }

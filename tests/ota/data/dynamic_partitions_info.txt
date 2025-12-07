@@ -1,0 +1,12 @@
+use_dynamic_partitions=true
+build_super_partition=true
+super_metadata_device=super
+super_partition_groups=sideload_test
+super_sideload_test_group_size=4194304
+super_sideload_test_partition_list=sideload_test
+super_partition_size=0
+virtual_ab=true
+virtual_ab_compression=true
+virtual_ab_compression_method=lz4
+virtual_ab_cow_version=3
+virtual_ab_compression_factor=65536

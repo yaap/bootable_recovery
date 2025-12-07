@@ -172,6 +172,7 @@ class GraphicMenu : public Menu {
   // selection to |initial_selection|. |headers| and |items| will be made local copies.
   GraphicMenu(const GRSurface* graphic_headers, const std::vector<const GRSurface*>& graphic_items,
               size_t initial_selection, const DrawInterface& draw_funcs);
+  virtual ~GraphicMenu();
 
   int Select(int sel) override;
   int DrawHeader(int x, int y) const override;

@@ -220,6 +220,9 @@ GraphicMenu::GraphicMenu(const GRSurface* graphic_headers,
   }
 }
 
+// Define destructor out-of-line so that GRSurface is defined for unique_ptr.
+GraphicMenu::~GraphicMenu() = default;
+
 int GraphicMenu::Select(int sel) {
   CHECK_LE(graphic_items_.size(), static_cast<size_t>(std::numeric_limits<int>::max()));
   int count = graphic_items_.size();

@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<configuration description="Config for recovery ota tests">
+  <test class="com.android.compatibility.common.tradefed.testtype.JarHostTest">
+    <option name="jar" value="RecoveryOtaTest.jar" />
+    <option name="runtime-hint" value="300s" />
+  </test>
+</configuration>

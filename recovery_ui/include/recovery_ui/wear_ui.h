@@ -17,6 +17,7 @@
 #ifndef RECOVERY_WEAR_UI_H
 #define RECOVERY_WEAR_UI_H
 
+#include <memory>
 #include <string>
 #include <vector>
 

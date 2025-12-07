@@ -445,11 +445,16 @@ int gr_init(std::initializer_list<GraphicsBackend> backends) {
   overscan_offset_x = gr_draw->width * overscan_percent / 100;
   overscan_offset_y = gr_draw->height * overscan_percent / 100;
 
-  gr_flip();
-  gr_flip();
-  if (!gr_draw) {
-    printf("gr_init: gr_draw becomes nullptr after gr_flip\n");
-    return -1;
+  bool no_initial_modset_flush =
+      android::base::GetBoolProperty("ro.minui.no_initial_modset_flush", false);
+
+  if (!no_initial_modset_flush) {
+    gr_flip();
+    gr_flip();
+    if (!gr_draw) {
+      printf("gr_init: gr_draw becomes nullptr after gr_flip\n");
+      return -1;
+    }
   }
 
   std::string rotation_str =

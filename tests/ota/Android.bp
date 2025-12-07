@@ -1,0 +1,102 @@
+// Copyright (C) 2025 The Android Open Source Project
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//      http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package {
+    default_applicable_licenses: ["Android-Apache-2.0"],
+}
+
+python_binary_host {
+    name: "gen_sideload_test_files",
+    srcs: [
+        "gen_sideload_test_files.py",
+    ],
+    libs: [
+        "ota_metadata_proto",
+    ],
+}
+
+filegroup {
+    name: "sideload_test_prebuilts",
+    srcs: [
+        // Sideload test images contain pseudorandom test data. We verify that
+        // the flashed image matches the test data, but do not otherwise
+        // inspect the content. The images are applied to an unused partition
+        // and do not participate in dm-verity/AVB and therefore are unsigned.
+        // To regenerate:
+        //
+        //    dd if=/dev/urandom of=data/sideload_test_1.img bs=1 count=32768
+        //
+        // Images must be aligned to the minimum allocation size of liblp (4kb).
+        "data/sideload_test_1.img",
+        "data/sideload_test_2.img",
+    ],
+}
+
+genrule {
+    name: "sideload_test_ota_packages",
+    tools: [
+        "delta_generator",
+        "gen_sideload_test_files",
+        "ota_from_raw_img",
+        "zip2zip",
+    ],
+    tool_files: [
+        ":system_dev_certificate{pk8}",
+        ":system_dev_certificate{pem}",
+        "data/dynamic_partitions_info.txt",
+    ],
+    device_common_srcs: [
+        // Read product/etc/build.prop instead of system/build.prop.
+        // system/build.prop has generic system properties but no product-
+        // specific values.
+        ":product-build.prop",
+    ],
+    srcs: [
+        ":sideload_test_prebuilts",
+    ],
+    cmd: "$(location gen_sideload_test_files) " +
+        "$(in) " +
+        "--out $(genDir) " +
+        "--dynamic_partitions_info_file $(location data/dynamic_partitions_info.txt) " +
+        "--ota_from_raw_img_path $(location ota_from_raw_img) " +
+        "--delta_generator_path $(location delta_generator) " +
+        "--package_key $(location :system_dev_certificate{pk8}) " +
+        "--build_prop_file $(location :product-build.prop) ",
+    out: [
+        "sideload_test_1.zip",
+        "sideload_test_2.zip",
+    ],
+}
+
+java_test_host {
+    name: "RecoveryOtaTest",
+    team: "trendy_team_android_kernel",
+    srcs: [
+        "src/**/*.kt",
+    ],
+    libs: [
+        "compatibility-host-util",
+        "tradefed",
+    ],
+    static_libs: [
+        "cts-install-lib-host",
+    ],
+    test_suites: [
+        "device-tests",
+    ],
+    data: [
+        ":sideload_test_ota_packages",
+        ":sideload_test_prebuilts",
+    ],
+}
