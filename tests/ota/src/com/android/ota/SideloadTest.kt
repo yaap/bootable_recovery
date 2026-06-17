@@ -252,8 +252,8 @@ class AbSideloadTest :  BaseHostJUnit4Test() {
     }
 
     private fun resetPersistProps() {
-        device.setProperty(DONT_COMMIT_CHECKPOINT_PROP, "")
         device.setProperty(BLOCK_MERGE_SWITCHOVER_PROP, "")
+        resetCheckpointingIfNeeded()
     }
 
     private fun exportRecoveryLogs(name: String) {
@@ -327,6 +327,10 @@ class AbSideloadTest :  BaseHostJUnit4Test() {
                     return@waitForCondition getUpdateState() == "none"
                 }
                 // We'll have to wait for the merge to start and then complete.
+                // If checkpointing is paused, make sure to resume it.
+                if (resetCheckpointingIfNeeded()) {
+                    return@waitForCondition false
+                }
             } else if (state == "merging") {
                 RunUtil.getDefault().sleep(1000L)
             } else if (state == "initiated") {
@@ -338,12 +342,24 @@ class AbSideloadTest :  BaseHostJUnit4Test() {
         }
     }
 
+    private fun resetCheckpointingIfNeeded(): Boolean {
+        if (getPropertyUncached(DONT_COMMIT_CHECKPOINT_PROP) == "1") {
+            device.setProperty(DONT_COMMIT_CHECKPOINT_PROP, "")
+            adbShell("vdc checkpoint commitChanges")
+            return true
+        }
+        return false
+    }
+
     private fun waitForCondition(message: String, timeout: Duration, sleep: Duration, cond: () -> Boolean) {
         val start = TimeSource.Monotonic.markNow()
         val limit = start + timeout
         while (true) {
-            if (cond()) {
-                return
+            try {
+                if (cond()) {
+                    return
+                }
+            } catch (e: DeviceNotAvailableException) {
             }
             if (TimeSource.Monotonic.markNow() >= limit) {
                 throw TimeoutException("timed out: $message")

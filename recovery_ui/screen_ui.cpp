@@ -1025,8 +1025,10 @@ bool ScreenRecoveryUI::LoadWipeDataMenuText() {
 }
 
 static bool InitGraphics() {
-  // Timeout is same as init wait for file default of 5 seconds and is arbitrary
-  const unsigned timeout = 500;  // 10ms increments
+  // Default timeout is 5 seconds, same as init wait for file
+  // 10ms increments
+  const unsigned timeout =
+      android::base::GetIntProperty("ro.recovery.ui.graphics_timeout_ms", 5000) / 10;
   for (auto retry = timeout; retry > 0; --retry) {
     if (gr_init() == 0) {
       if (retry < timeout) {

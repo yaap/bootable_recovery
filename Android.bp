@@ -177,7 +177,7 @@ cc_binary {
     ],
 
     shared_libs: [
-        "android.hardware.health-V4-ndk", // from librecovery_utils
+        "android.hardware.health-V5-ndk", // from librecovery_utils
         "android.hardware.boot-V1-ndk",
         "librecovery_ui",
     ],

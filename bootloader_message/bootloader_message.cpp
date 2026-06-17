@@ -40,7 +40,7 @@
 using android::fs_mgr::Fstab;
 using android::fs_mgr::ReadDefaultFstab;
 
-static std::optional<std::string> g_misc_device_for_test;
+[[clang::no_destroy]] static std::optional<std::string> g_misc_device_for_test;
 
 // Exposed for test purpose.
 void SetMiscBlockDeviceForTest(std::string_view misc_device) {
