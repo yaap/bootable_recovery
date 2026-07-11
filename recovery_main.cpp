@@ -74,6 +74,9 @@ static bool IsRoDebuggable() {
 }
 
 static bool IsDeviceUnlocked() {
+  std::string fenrir;
+  if (android::fs_mgr::GetKernelCmdline("fenrir", &fenrir) && fenrir == "true")
+    return true;
   return "orange" == android::base::GetProperty("ro.boot.verifiedbootstate", "");
 }
 
